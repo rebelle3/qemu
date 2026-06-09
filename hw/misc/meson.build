@@ -166,3 +166,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+system_ss.add(when: 'CONFIG_IPOD6G', if_true: files('s5l8702_syscon.c'))
+system_ss.add(when: 'CONFIG_IPOD6G', if_true: files('pcf50635.c'))

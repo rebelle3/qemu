@@ -58,6 +58,8 @@ struct PL080State {
     uint32_t sync;
     uint32_t req_single;
     uint32_t req_burst;
+    /* level of the external DREQ input lines (not reset state) */
+    uint32_t dreq_level;
     pl080_channel chan[PL080_MAX_CHANNELS];
     int nchannels;
     /* Flag to avoid recursive DMA invocations.  */

@@ -142,3 +142,4 @@ endif
 system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_lcdc.c'))
 
 modules += { 'hw-display': hw_display_modules }
+system_ss.add(when: 'CONFIG_IPOD6G', if_true: files('s5l8702_lcd.c'))

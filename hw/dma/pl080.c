@@ -51,8 +51,8 @@ static const VMStateDescription vmstate_pl080_channel = {
 
 static const VMStateDescription vmstate_pl080 = {
     .name = "pl080",
-    .version_id = 1,
-    .minimum_version_id = 1,
+    .version_id = 2,
+    .minimum_version_id = 2,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_mask, PL080State),
@@ -62,6 +62,7 @@ static const VMStateDescription vmstate_pl080 = {
         VMSTATE_UINT32(sync, PL080State),
         VMSTATE_UINT32(req_single, PL080State),
         VMSTATE_UINT32(req_burst, PL080State),
+        VMSTATE_UINT32(dreq_level, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
@@ -138,7 +139,7 @@ again:
             src_id = (ch->conf >> 1) & 0x1f;
             dest_id = (ch->conf >> 6) & 0x1f;
             size = ch->ctrl & 0xfff;
-            req = s->req_single | s->req_burst;
+            req = s->req_single | s->req_burst | s->dreq_level;
             switch (flow) {
             case 0:
                 break;
@@ -399,6 +400,23 @@ static void pl080_reset(DeviceState *dev)
     }
 }
 
+/*
+ * Peripheral "single" DMA request inputs.  Boards can wire device
+ * DREQ outputs here; channels using peripheral flow control only
+ * make progress while the matching request line is high.
+ */
+static void pl080_dreq(void *opaque, int n, int level)
+{
+    PL080State *s = opaque;
+
+    if (level) {
+        s->dreq_level |= 1u << n;
+    } else {
+        s->dreq_level &= ~(1u << n);
+    }
+    pl080_run(s);
+}
+
 static void pl080_init(Object *obj)
 {
     SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
@@ -409,6 +427,7 @@ static void pl080_init(Object *obj)
     sysbus_init_irq(sbd, &s->irq);
     sysbus_init_irq(sbd, &s->interr);
     sysbus_init_irq(sbd, &s->inttc);
+    qdev_init_gpio_in_named(DEVICE(obj), pl080_dreq, "dreq", 16);
     s->nchannels = 8;
 }
 
