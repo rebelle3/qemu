@@ -22,10 +22,12 @@
 #include "qemu/units.h"
 #include "system/address-spaces.h"
 #include "system/system.h"
+#include "system/blockdev.h"
 #include "system/reset.h"
 #include "hw/arm/boot.h"
 #include "hw/arm/machines-qom.h"
 #include "hw/core/boards.h"
+#include "system/block-backend.h"
 #include "hw/i2c/i2c.h"
 #include "hw/core/irq.h"
 #include "hw/core/loader.h"
@@ -239,6 +241,21 @@ static void ipod6g_init(MachineState *machine)
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, IPOD6G_LCD_BASE);
 
+    /* ATA disk controller */
+    {
+        DriveInfo *dinfo = drive_get(IF_IDE, 0, 0);
+
+        dev = qdev_new("s5l8702-ata");
+        if (dinfo) {
+            qdev_prop_set_drive_err(dev, "drive",
+                                    blk_by_legacy_dinfo(dinfo), &error_fatal);
+        }
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, IPOD6G_ATA_BASE);
+        sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0,
+                           qdev_get_gpio_in(vic[0], IRQ_ATA));
+    }
+
     /* DMA controllers (PL080) */
     dev = ipod6g_dmac(IPOD6G_DMAC0_BASE, qdev_get_gpio_in(vic[0], IRQ_DMAC0));
     /* The LCD write FIFO (DMAC0 request 3) is always ready */
@@ -264,7 +281,6 @@ static void ipod6g_init(MachineState *machine)
     ipod6g_stub("s5l8702.adc", IPOD6G_ADC_BASE, 0x1000);
     ipod6g_stub("s5l8702.spi0", IPOD6G_SPI0_BASE, 0x1000);
     ipod6g_stub("s5l8702.spi2", IPOD6G_SPI2_BASE, 0x1000);
-    ipod6g_stub("s5l8702.ata", IPOD6G_ATA_BASE, 0x1000);
 
     /* Boot */
     if (machine->kernel_filename) {
