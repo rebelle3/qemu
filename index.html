@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!--
+  iPod Classic 6G (Rockbox) emulator in the browser.
+  QEMU compiled to WebAssembly; see README.rst for the build recipe.
+
+  SPDX-License-Identifier: GPL-2.0-or-later
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>iPod Classic 6G — QEMU + Rockbox in the browser</title>
+<style>
+  body { background:#1a1a1a; color:#ddd; font-family:system-ui,sans-serif;
+         display:flex; flex-direction:column; align-items:center; }
+  h1 { font-size:1.1rem; font-weight:500; }
+  #ipod { background:#e8e8ea; border-radius:28px; padding:26px 22px 18px;
+          box-shadow:0 8px 30px rgba(0,0,0,.6); margin-top:1rem; }
+  #screen { display:block; width:640px; height:480px; background:#000;
+            border:10px solid #111; border-radius:6px;
+            image-rendering:pixelated; outline:none; }
+  #wheel { margin:22px auto 4px; width:230px; height:230px; border-radius:50%;
+           background:#fafafa; position:relative;
+           box-shadow:inset 0 0 6px rgba(0,0,0,.25); user-select:none; }
+  #wheel button { position:absolute; background:none; border:none;
+                  color:#9a9aa0; font-size:13px; font-weight:600;
+                  cursor:pointer; padding:10px; }
+  #wheel button:active { color:#333; }
+  #b-menu { top:6px; left:50%; transform:translateX(-50%); }
+  #b-prev { left:8px; top:50%; transform:translateY(-50%); }
+  #b-next { right:8px; top:50%; transform:translateY(-50%); }
+  #b-play { bottom:6px; left:50%; transform:translateX(-50%); }
+  #b-select { top:50%; left:50%; transform:translate(-50%,-50%);
+              width:84px; height:84px; border-radius:50%;
+              background:#e0e0e3; box-shadow:inset 0 0 5px rgba(0,0,0,.2); }
+  #status { margin-top:.8rem; font-size:.85rem; color:#888; min-height:1.2em; }
+  kbd { background:#333; border-radius:3px; padding:1px 5px; font-size:.8em; }
+</style>
+</head>
+<body>
+<h1>iPod Classic 6G — QEMU + Rockbox, compiled to WebAssembly</h1>
+<div id="ipod">
+  <canvas id="screen" width="320" height="240" tabindex="0"></canvas>
+  <div id="wheel">
+    <button id="b-menu">MENU</button>
+    <button id="b-prev">&#9198;</button>
+    <button id="b-next">&#9197;</button>
+    <button id="b-play">&#9654;&#10074;&#10074;</button>
+    <button id="b-select"></button>
+  </div>
+</div>
+<div id="status">loading…</div>
+<p>Keys: <kbd>&uarr;</kbd> MENU &nbsp;<kbd>&darr;</kbd> PLAY &nbsp;
+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> PREV/NEXT &nbsp;<kbd>Enter</kbd> SELECT
+&nbsp;<kbd>[</kbd>/<kbd>]</kbd> or mouse wheel = scroll.
+First press only wakes the backlight.</p>
+<script src="./coi-serviceworker.js"></script>
+<script type="module" src="./ipod6g.js"></script>
+</body>
+</html>
