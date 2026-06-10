@@ -58,9 +58,6 @@ static void fb_copy_bh(void *opaque)
     int w, h, x, y;
 
     frame_pending = false;
-    if (fb_state.frame == 0) {
-        fprintf(stderr, "wasm-shim: fb_copy_bh running, con=%p\n", (void *)con);
-    }
     if (!con) {
         return;
     }
@@ -109,16 +106,15 @@ static void fb_copy_bh(void *opaque)
 
 EMSCRIPTEN_KEEPALIVE void qemu_wasm_request_frame(void)
 {
-    static int reqs;
+    AioContext *ctx = qemu_get_aio_context();
 
+    if (!ctx) {
+        return;     /* QEMU main loop not initialised yet */
+    }
     if (qatomic_xchg(&frame_pending, true)) {
         return;     /* one in flight is enough */
     }
-    if (reqs++ == 0) {
-        fprintf(stderr, "wasm-shim: first request, ctx=%p\n",
-                (void *)qemu_get_aio_context());
-    }
-    aio_bh_schedule_oneshot(qemu_get_aio_context(), fb_copy_bh, NULL);
+    aio_bh_schedule_oneshot(ctx, fb_copy_bh, NULL);
 }
 
 static void key_bh(void *opaque)
@@ -130,7 +126,10 @@ static void key_bh(void *opaque)
 
 EMSCRIPTEN_KEEPALIVE void qemu_wasm_key_event(int qcode, int down)
 {
+    AioContext *ctx = qemu_get_aio_context();
     uintptr_t v = ((uintptr_t)qcode << 1) | (down ? 1 : 0);
 
-    aio_bh_schedule_oneshot(qemu_get_aio_context(), key_bh, (void *)v);
+    if (ctx) {
+        aio_bh_schedule_oneshot(ctx, key_bh, (void *)v);
+    }
 }
