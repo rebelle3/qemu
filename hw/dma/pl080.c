@@ -63,6 +63,9 @@ static const VMStateDescription vmstate_pl080 = {
         VMSTATE_UINT32(req_single, PL080State),
         VMSTATE_UINT32(req_burst, PL080State),
         VMSTATE_UINT32(dreq_level, PL080State),
+        VMSTATE_UINT32_V(pending_complete, PL080State, 2),
+        VMSTATE_UINT32_V(pending_tc, PL080State, 2),
+        VMSTATE_TIMER_V(tc_timer, PL080State, 2),
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
@@ -130,6 +133,8 @@ again:
             /* Test if thiws channel has any pending DMA requests.  */
             if ((ch->conf & (PL080_CCONF_H | PL080_CCONF_E))
                     != PL080_CCONF_E)
+                continue;
+            if (s->pending_complete & (1u << c))
                 continue;
             flow = (ch->conf >> 11) & 7;
             if (flow >= 4) {
@@ -204,8 +209,34 @@ again:
             size -= xsize / swidth;
             ch->ctrl = (ch->ctrl & 0xfffff000) | size;
             if (size == 0) {
-                /* Transfer complete.  */
+                /*
+                 * Transfer complete.  The terminal count interrupt is
+                 * controlled by the I bit of the segment that just
+                 * completed, not by the next chained LLI.
+                 */
+                bool seg_tc = (ch->ctrl & PL080_CCTRL_I) != 0;
+
                 next_lli = (ch->lli & ~3);
+                if (s->tc_delay_ns && (seg_tc || !next_lli)) {
+                    /*
+                     * Emulate the FIFO drain time of the segment that
+                     * just completed.  This delivers one terminal-count
+                     * interrupt per I-flagged segment (instead of
+                     * coalescing several within one synchronous run)
+                     * and, at the end of the chain, leaves the channel
+                     * enabled for a short window so that a guest
+                     * appending to the chain via the LLI register still
+                     * finds it running, as it would on hardware.
+                     */
+                    s->pending_complete |= 1u << c;
+                    if (seg_tc) {
+                        s->pending_tc |= 1u << c;
+                    }
+                    timer_mod(&s->tc_timer,
+                              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL)
+                              + s->tc_delay_ns);
+                    continue;
+                }
                 if (next_lli) {
                     ch->src = address_space_ldl_le(&s->downstream_as,
                                                    next_lli,
@@ -226,7 +257,7 @@ again:
                 } else {
                     ch->conf &= ~PL080_CCONF_E;
                 }
-                if (ch->ctrl & PL080_CCTRL_I) {
+                if (seg_tc) {
                     s->tc_int |= 1 << c;
                 }
             }
@@ -405,6 +436,44 @@ static void pl080_reset(DeviceState *dev)
  * DREQ outputs here; channels using peripheral flow control only
  * make progress while the matching request line is high.
  */
+static void pl080_tc_timer(void *opaque)
+{
+    PL080State *s = opaque;
+    uint32_t pending = s->pending_complete;
+    int c;
+
+    s->pending_complete = 0;
+
+    for (c = 0; c < s->nchannels; c++) {
+        pl080_channel *ch = &s->chan[c];
+        uint32_t next_lli;
+
+        if (!(pending & (1u << c))) {
+            continue;
+        }
+        if (s->pending_tc & (1u << c)) {
+            s->tc_int |= 1 << c;
+        }
+        next_lli = ch->lli & ~3;
+        if (next_lli) {
+            /* the guest extended the chain during the drain window */
+            ch->src = address_space_ldl_le(&s->downstream_as, next_lli,
+                                           MEMTXATTRS_UNSPECIFIED, NULL);
+            ch->dest = address_space_ldl_le(&s->downstream_as, next_lli + 4,
+                                            MEMTXATTRS_UNSPECIFIED, NULL);
+            ch->ctrl = address_space_ldl_le(&s->downstream_as, next_lli + 12,
+                                            MEMTXATTRS_UNSPECIFIED, NULL);
+            ch->lli = address_space_ldl_le(&s->downstream_as, next_lli + 8,
+                                           MEMTXATTRS_UNSPECIFIED, NULL);
+        } else {
+            ch->conf &= ~PL080_CCONF_E;
+        }
+        s->pending_tc &= ~(1u << c);
+    }
+    pl080_update(s);
+    pl080_run(s);
+}
+
 static void pl080_dreq(void *opaque, int n, int level)
 {
     PL080State *s = opaque;
@@ -428,6 +497,7 @@ static void pl080_init(Object *obj)
     sysbus_init_irq(sbd, &s->interr);
     sysbus_init_irq(sbd, &s->inttc);
     qdev_init_gpio_in_named(DEVICE(obj), pl080_dreq, "dreq", 16);
+    timer_init_ns(&s->tc_timer, QEMU_CLOCK_VIRTUAL, pl080_tc_timer, s);
     s->nchannels = 8;
 }
 
@@ -453,6 +523,7 @@ static void pl081_init(Object *obj)
 static const Property pl080_properties[] = {
     DEFINE_PROP_LINK("downstream", PL080State, downstream,
                      TYPE_MEMORY_REGION, MemoryRegion *),
+    DEFINE_PROP_UINT32("tc-delay-ns", PL080State, tc_delay_ns, 0),
 };
 
 static void pl080_class_init(ObjectClass *oc, const void *data)

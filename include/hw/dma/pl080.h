@@ -30,6 +30,7 @@
 #define HW_DMA_PL080_H
 
 #include "hw/core/sysbus.h"
+#include "qemu/timer.h"
 #include "qom/object.h"
 
 #define PL080_MAX_CHANNELS 8
@@ -60,6 +61,18 @@ struct PL080State {
     uint32_t req_burst;
     /* level of the external DREQ input lines (not reset state) */
     uint32_t dreq_level;
+    /*
+     * Optional delay (ns) between a channel consuming its final LLI
+     * element and the terminal-count/disable becoming visible,
+     * emulating the time the last beats spend draining through a
+     * peripheral FIFO.  While the delay is pending the channel still
+     * reads as enabled and a write to its LLI register extends the
+     * chain, as on real hardware.  0 = complete immediately.
+     */
+    uint32_t tc_delay_ns;
+    uint32_t pending_complete;  /* bitmask of channels in drain window */
+    uint32_t pending_tc;        /* deferred terminal-count flags */
+    QEMUTimer tc_timer;
     pl080_channel chan[PL080_MAX_CHANNELS];
     int nchannels;
     /* Flag to avoid recursive DMA invocations.  */

@@ -117,6 +117,8 @@ static DeviceState *ipod6g_dmac(hwaddr base, qemu_irq irq)
 
     object_property_set_link(OBJECT(dev), "downstream",
                              OBJECT(get_system_memory()), &error_fatal);
+    /* emulate peripheral FIFO drain so chain appends win the race */
+    qdev_prop_set_uint32(dev, "tc-delay-ns", 200000);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
@@ -257,9 +259,10 @@ static void ipod6g_init(MachineState *machine)
     }
 
     /* DMA controllers (PL080) */
-    dev = ipod6g_dmac(IPOD6G_DMAC0_BASE, qdev_get_gpio_in(vic[0], IRQ_DMAC0));
+    DeviceState *dmac0 = ipod6g_dmac(IPOD6G_DMAC0_BASE,
+                                     qdev_get_gpio_in(vic[0], IRQ_DMAC0));
     /* The LCD write FIFO (DMAC0 request 3) is always ready */
-    qemu_irq_raise(qdev_get_gpio_in_named(dev, "dreq", 3));
+    qemu_irq_raise(qdev_get_gpio_in_named(dmac0, "dreq", 3));
     ipod6g_dmac(IPOD6G_DMAC1_BASE, qdev_get_gpio_in(vic[0], IRQ_DMAC1));
 
     /*
@@ -276,7 +279,16 @@ static void ipod6g_init(MachineState *machine)
     ipod6g_stub("s5l8702.eic", IPOD6G_EIC_BASE, 0x1000);
     ipod6g_stub("s5l8702.usbphy", IPOD6G_USBPHY_BASE, 0x1000);
     ipod6g_stub("s5l8702.wdt", IPOD6G_WDT_BASE, 0x1000);
-    ipod6g_stub("s5l8702.i2s0", IPOD6G_I2S0_BASE, 0x1000);
+    /* I2S0: audio sink pacing the playback DMA */
+    {
+        DeviceState *i2s = qdev_new("s5l8702-i2s");
+
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(i2s), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(i2s), 0, IPOD6G_I2S0_BASE);
+        /* IIS0_TX is DMAC0 peripheral request line 0xA */
+        qdev_connect_gpio_out_named(i2s, "dreq", 0,
+                                    qdev_get_gpio_in_named(dmac0, "dreq", 0xa));
+    }
     ipod6g_stub("s5l8702.uart", IPOD6G_UART_BASE, 0x10000);
     ipod6g_stub("s5l8702.adc", IPOD6G_ADC_BASE, 0x1000);
     ipod6g_stub("s5l8702.spi0", IPOD6G_SPI0_BASE, 0x1000);
