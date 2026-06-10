@@ -109,13 +109,59 @@ canvas.addEventListener('wheel', (e) => {
 
 function bindButton(id, qcode) {
     const el = document.getElementById(id);
-    el.addEventListener('pointerdown', () => key(qcode, true));
-    el.addEventListener('pointerup', () => key(qcode, false));
+    el.addEventListener('pointerdown', (e) => {
+        e.stopPropagation(); key(qcode, true);
+    });
+    el.addEventListener('pointerup', (e) => {
+        e.stopPropagation(); key(qcode, false);
+    });
 }
 bindButton('b-menu', QKEY.up);
 bindButton('b-play', QKEY.down);
 bindButton('b-prev', QKEY.left);
 bindButton('b-next', QKEY.right);
 bindButton('b-select', QKEY.ret);
+
+/* ---- rotational touch on the wheel, like the real thing ----
+ * Track the finger's angle around the wheel centre and feed absolute
+ * positions (0..95, clockwise, 0 at 12 o'clock) to the emulated
+ * capacitive sensor via the shim. Rockbox computes the deltas itself,
+ * exactly as on hardware. */
+const wheelEl = document.getElementById('wheel');
+const hasWheelApi = typeof qemu._qemu_wasm_wheel === 'function';
+let wheelLast = -1;
+
+function wheelPos(e) {
+    const r = wheelEl.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    /* atan2 with screen-y down is clockwise; rotate so 0 = 12 o'clock */
+    const ang = Math.atan2(dy, dx) + Math.PI / 2;
+    return ((Math.round(ang / (2 * Math.PI) * 96) % 96) + 96) % 96;
+}
+
+if (hasWheelApi) {
+    wheelEl.addEventListener('pointerdown', (e) => {
+        wheelEl.setPointerCapture(e.pointerId);
+        wheelLast = wheelPos(e);
+        qemu._qemu_wasm_wheel(wheelLast, 1);
+        e.preventDefault();
+    });
+    wheelEl.addEventListener('pointermove', (e) => {
+        if (wheelLast < 0) return;
+        const p = wheelPos(e);
+        if (p !== wheelLast) {
+            wheelLast = p;
+            qemu._qemu_wasm_wheel(p, 1);
+        }
+    });
+    const lift = (e) => {
+        if (wheelLast < 0) return;
+        qemu._qemu_wasm_wheel(wheelLast, 0);
+        wheelLast = -1;
+    };
+    wheelEl.addEventListener('pointerup', lift);
+    wheelEl.addEventListener('pointercancel', lift);
+}
 
 canvas.focus();
