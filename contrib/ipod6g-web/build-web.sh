@@ -33,35 +33,32 @@ export PKG_CONFIG_LIBDIR="$WASM_TARGET/lib/pkgconfig"
 export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 export EM_PKG_CONFIG_PATH="$PKG_CONFIG_PATH"
 
-# --- 1+2. QEMU (two passes for the shim) -----------------------------
-# configure's compiler checks link with --extra-ldflags, so give them an
-# empty placeholder object first; compile the real shim (which needs the
-# generated headers from the configured build dir) before the final make.
+# --- 1. QEMU ----------------------------------------------------------
 mkdir -p "$BUILD"
-[ -f "$BUILD/wasm-shim.o" ] || \
-    ( echo > "$BUILD/empty-shim.c" && \
-      emcc -O2 -pthread -sMEMORY64=2 -c "$BUILD/empty-shim.c" \
-           -o "$BUILD/wasm-shim.o" )
-
 cd "$BUILD"
 if [ ! -f config-host.mak ]; then
     emconfigure "$QEMU_SRC/configure" \
         --target-list=arm-softmmu \
         --static --cpu=wasm64 --wasm64-32bit-address-limit \
-        --disable-tools --disable-docs --enable-tcg-interpreter \
-        --extra-ldflags="$BUILD/wasm-shim.o -L$WASM_TARGET/lib"
+        --disable-tools --disable-docs --enable-tcg-interpreter
 fi
-
-# first pass: full build with the placeholder shim (also generates the
-# headers the real shim needs, e.g. config-poison.h)
 emmake make -j"$(nproc)"
 
-# compile the real shim and relink
+# --- 2. shim ----------------------------------------------------------
+# The browser glue is linked in a separate final link: meson machine
+# files cannot carry an extra object (the in-tree emscripten cross file
+# owns c_link_args), so replay ninja's exact link command with the shim
+# object prepended to the response file.
 emcc -O2 -pthread -sMEMORY64=2 -DWASM_BIGINT \
     -I"$QEMU_SRC/include" -I"$BUILD" \
     $(pkg-config --cflags glib-2.0 pixman-1) \
     -c "$HERE/wasm-shim.c" -o "$BUILD/wasm-shim.o"
-emmake make -j"$(nproc)"
+
+LINKCMD=$(ninja -t commands qemu-system-arm.js | tail -1)
+RSP=$(echo "$LINKCMD" | grep -o '@[^ ]*' | tr -d '@')
+PREFIX=${LINKCMD%%@*}
+( printf 'wasm-shim.o ' ; cat "$RSP" ) > shim-link.rsp
+$PREFIX @shim-link.rsp
 
 # --- 3. disk ---------------------------------------------------------
 "$HERE/../ipod6g/mkdisk.sh" "$BUILD/ipod-web.img" "$ROCKBOX_ZIP" \
@@ -74,7 +71,7 @@ python3 - "$QEMU_SRC" "$BUILD/qkeycodes.json" <<'PY'
 import json, re, sys
 src, out = sys.argv[1], sys.argv[2]
 text = open(src + '/qapi/ui.json').read()
-m = re.search(r"'name': 'QKeyCode'.*?'data':\s*\[(.*?)\]", text, re.S)
+m = re.search(r"'enum': 'QKeyCode'.*?'data':\s*\[(.*?)\]", text, re.S)
 names = re.findall(r"'([a-z0-9_\-]+)'", m.group(1))
 codes = {n.replace('-', '_'): i for i, n in enumerate(names)}
 json.dump(codes, open(out, 'w'))
