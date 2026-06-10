@@ -107,29 +107,38 @@ canvas.addEventListener('wheel', (e) => {
     key(q, true); setTimeout(() => key(q, false), 30);
 }, { passive: false });
 
-function bindButton(id, qcode) {
-    const el = document.getElementById(id);
+/*
+ * The centre SELECT is a real button (not part of the touch ring):
+ * immediate press/release, and it never starts a rotation.
+ */
+{
+    const el = document.getElementById('b-select');
     el.addEventListener('pointerdown', (e) => {
-        e.stopPropagation(); key(qcode, true);
+        e.stopPropagation(); key(QKEY.ret, true);
     });
     el.addEventListener('pointerup', (e) => {
-        e.stopPropagation(); key(qcode, false);
+        e.stopPropagation(); key(QKEY.ret, false);
     });
 }
-bindButton('b-menu', QKEY.up);
-bindButton('b-play', QKEY.down);
-bindButton('b-prev', QKEY.left);
-bindButton('b-next', QKEY.right);
-bindButton('b-select', QKEY.ret);
 
-/* ---- rotational touch on the wheel, like the real thing ----
- * Track the finger's angle around the wheel centre and feed absolute
- * positions (0..95, clockwise, 0 at 12 o'clock) to the emulated
- * capacitive sensor via the shim. Rockbox computes the deltas itself,
- * exactly as on hardware. */
+/* ---- the touch ring: rotation + tap, like the real thing ----
+ * The whole ring (including the printed MENU/PLAY/PREV/NEXT labels) is
+ * the capacitive sensor: the finger's angle around the centre feeds
+ * absolute positions (0..95, clockwise, 0 = 12 o'clock) to the
+ * emulated sensor, and Rockbox computes the scroll deltas itself.
+ * A touch that starts on a label and lifts without rotating counts as
+ * a tap of that button; once it rotates, the tap is cancelled. */
 const wheelEl = document.getElementById('wheel');
 const hasWheelApi = typeof qemu._qemu_wasm_wheel === 'function';
+const RING_BUTTONS = {
+    'b-menu': QKEY.up, 'b-play': QKEY.down,
+    'b-prev': QKEY.left, 'b-next': QKEY.right,
+};
+const TAP_SLOP_CLICKS = 2;      /* movement before a tap becomes a scroll */
+
 let wheelLast = -1;
+let tapButton = null;           /* qcode of a pending ring-button tap */
+let tapMoved = 0;
 
 function wheelPos(e) {
     const r = wheelEl.getBoundingClientRect();
@@ -144,6 +153,8 @@ if (hasWheelApi) {
     wheelEl.addEventListener('pointerdown', (e) => {
         wheelEl.setPointerCapture(e.pointerId);
         wheelLast = wheelPos(e);
+        tapButton = RING_BUTTONS[e.target.id] ?? null;
+        tapMoved = 0;
         qemu._qemu_wasm_wheel(wheelLast, 1);
         e.preventDefault();
     });
@@ -151,6 +162,13 @@ if (hasWheelApi) {
         if (wheelLast < 0) return;
         const p = wheelPos(e);
         if (p !== wheelLast) {
+            /* shortest signed distance around the ring */
+            let d = (p - wheelLast + 96) % 96;
+            if (d > 48) d -= 96;
+            tapMoved += Math.abs(d);
+            if (tapMoved > TAP_SLOP_CLICKS) {
+                tapButton = null;   /* it's a scroll, not a tap */
+            }
             wheelLast = p;
             qemu._qemu_wasm_wheel(p, 1);
         }
@@ -159,6 +177,14 @@ if (hasWheelApi) {
         if (wheelLast < 0) return;
         qemu._qemu_wasm_wheel(wheelLast, 0);
         wheelLast = -1;
+        if (tapButton !== null) {
+            /* finger lifted without rotating: deliver the button tap,
+             * held long enough for the guest's button tick to see it */
+            const q = tapButton;
+            tapButton = null;
+            key(q, true);
+            setTimeout(() => key(q, false), 100);
+        }
     };
     wheelEl.addEventListener('pointerup', lift);
     wheelEl.addEventListener('pointercancel', lift);
