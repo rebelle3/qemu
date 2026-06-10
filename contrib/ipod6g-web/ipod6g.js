@@ -80,7 +80,7 @@ function blit() {
             if (!image || image.width !== w || image.height !== h) {
                 canvas.width = w; canvas.height = h;
                 image = ctx.createImageData(w, h);
-                status('running — click the screen, then use the keys below');
+                audioBadge();
             }
             image.data.set(d.subarray(16, 16 + w * h * 4));
             ctx.putImageData(image, 0, 0);
@@ -198,16 +198,43 @@ if (hasWheelApi) {
  * gesture to satisfy autoplay policies. */
 let actx = null, playhead = 0, lastChunk = 0;
 
-function ensureAudio() {
+function audioBadge() {
+    const el = document.getElementById('status');
     if (!actx) {
-        actx = new (window.AudioContext || window.webkitAudioContext)(
-            { sampleRate: 44100 });
-        playhead = 0;
+        el.textContent = 'running — tap anywhere to enable sound 🔇';
+    } else if (actx.state !== 'running') {
+        el.textContent = 'sound blocked — tap again (check the silent switch) 🔇';
+    } else {
+        el.textContent = 'running 🔊 (iPhone: ring/silent switch must be off '
+                       + 'to hear Web Audio)';
     }
-    if (actx.state === 'suspended') actx.resume();
 }
-window.addEventListener('pointerdown', ensureAudio, true);
-window.addEventListener('keydown', ensureAudio, true);
+
+function ensureAudio() {
+    try {
+        if (!actx) {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            try { actx = new AC({ sampleRate: 44100 }); }
+            catch (e) { actx = new AC(); }
+            playhead = 0;
+        }
+        if (actx.state !== 'running') {
+            actx.resume();
+            /* canonical iOS unlock: play a short silent buffer from
+             * inside the user gesture */
+            const b = actx.createBuffer(1, 1, actx.sampleRate);
+            const src = actx.createBufferSource();
+            src.buffer = b;
+            src.connect(actx.destination);
+            src.start(0);
+        }
+    } catch (e) { console.warn('audio unlock failed:', e); }
+    setTimeout(audioBadge, 150);
+}
+/* iOS Safari only treats some gesture types as activation for audio */
+for (const ev of ['touchend', 'click', 'pointerup', 'keydown']) {
+    window.addEventListener(ev, ensureAudio, true);
+}
 
 function pumpAudio() {
     if (!actx || actx.state !== 'running') return;
