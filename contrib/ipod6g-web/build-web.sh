@@ -52,11 +52,15 @@ if [ ! -f config-host.mak ]; then
         --extra-ldflags="$BUILD/wasm-shim.o -L$WASM_TARGET/lib"
 fi
 
+# first pass: full build with the placeholder shim (also generates the
+# headers the real shim needs, e.g. config-poison.h)
+emmake make -j"$(nproc)"
+
+# compile the real shim and relink
 emcc -O2 -pthread -sMEMORY64=2 -DWASM_BIGINT \
     -I"$QEMU_SRC/include" -I"$BUILD" \
-    $(pkg-config --cflags glib-2.0) \
+    $(pkg-config --cflags glib-2.0 pixman-1) \
     -c "$HERE/wasm-shim.c" -o "$BUILD/wasm-shim.o"
-
 emmake make -j"$(nproc)"
 
 # --- 3. disk ---------------------------------------------------------

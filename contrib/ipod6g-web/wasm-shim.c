@@ -24,7 +24,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
-#include "block/aio.h"
+#include "qemu/aio.h"
 #include "ui/console.h"
 #include "ui/surface.h"
 #include "ui/input.h"
