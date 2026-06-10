@@ -70,6 +70,7 @@ struct S5L8702I2SState {
     int16_t ring[RING_SIZE];
     uint32_t ring_head;     /* oldest sample */
     uint32_t ring_len;
+    uint32_t tee_wpos;      /* cumulative, fallback-mode tee */
 
     /* fallback path */
     int32_t credits;
@@ -124,8 +125,42 @@ static void s5l8702_i2s_push(S5L8702I2SState *s, uint16_t sample)
         }
     } else if (s->credits > 0) {
         s->credits--;
+        /* tee for external consumers (the WebAssembly front-end) */
+        s->ring[s->tee_wpos % RING_SIZE] = sample;
+        s->tee_wpos++;
     }
     s5l8702_i2s_update_dreq(s);
+}
+
+/*
+ * Copy samples the fallback path teed since @*seq (cumulative sample
+ * counter) into @dst.  Used by the WebAssembly front-end shim, which
+ * cannot use a host audio backend from QEMU's thread.
+ */
+size_t s5l8702_i2s_tee_read(void *dev, uint32_t *seq, int16_t *dst,
+                            size_t max);
+
+size_t s5l8702_i2s_tee_read(void *dev, uint32_t *seq, int16_t *dst,
+                            size_t max)
+{
+    S5L8702I2SState *s = S5L8702_I2S(dev);
+    uint32_t behind = s->tee_wpos - *seq;
+    size_t n;
+
+    if (behind == 0) {
+        return 0;
+    }
+    if (behind > RING_SIZE) {
+        /* consumer fell behind a full ring; skip to the oldest valid */
+        *seq = s->tee_wpos - RING_SIZE;
+        behind = RING_SIZE;
+    }
+    n = MIN((size_t)behind, max);
+    for (size_t i = 0; i < n; i++) {
+        dst[i] = s->ring[(*seq + i) % RING_SIZE];
+    }
+    *seq += n;
+    return n;
 }
 
 /* fallback pacing when no audio backend is configured */
@@ -220,6 +255,7 @@ static void s5l8702_i2s_reset_hold(Object *obj, ResetType type)
     s->credits = 0;
     s->ring_head = 0;
     s->ring_len = 0;
+    s->tee_wpos = 0;
     if (s->voice) {
         audio_be_set_active_out(s->audio_be, s->voice, false);
     }
@@ -275,6 +311,7 @@ static const VMStateDescription vmstate_s5l8702_i2s = {
         VMSTATE_INT16_ARRAY(ring, S5L8702I2SState, RING_SIZE),
         VMSTATE_UINT32(ring_head, S5L8702I2SState),
         VMSTATE_UINT32(ring_len, S5L8702I2SState),
+        VMSTATE_UINT32(tee_wpos, S5L8702I2SState),
         VMSTATE_TIMER(pace_timer, S5L8702I2SState),
         VMSTATE_END_OF_LIST()
     }

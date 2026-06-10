@@ -191,6 +191,54 @@ if (hasWheelApi) {
     wheelEl.addEventListener('pointercancel', lift);
 }
 
+/* ---- audio: stream the I2S tee into Web Audio ----
+ * The SDL backend cannot run from QEMU's pthread in the browser, so
+ * the shim publishes PCM chunks through MEMFS (like the framebuffer)
+ * and we schedule them on an AudioContext, created on the first user
+ * gesture to satisfy autoplay policies. */
+let actx = null, playhead = 0, lastChunk = 0;
+
+function ensureAudio() {
+    if (!actx) {
+        actx = new (window.AudioContext || window.webkitAudioContext)(
+            { sampleRate: 44100 });
+        playhead = 0;
+    }
+    if (actx.state === 'suspended') actx.resume();
+}
+window.addEventListener('pointerdown', ensureAudio, true);
+window.addEventListener('keydown', ensureAudio, true);
+
+function pumpAudio() {
+    if (!actx || actx.state !== 'running') return;
+    qemu._qemu_wasm_audio_poll();
+    try {
+        const d = qemu.FS.readFile('/achunk');
+        const hdr = new Uint32Array(d.buffer, d.byteOffset, 2);
+        if (hdr[0] === lastChunk) return;
+        lastChunk = hdr[0];
+        const n = hdr[1];                     /* 16-bit samples (L,R,...) */
+        const pcm = new Int16Array(d.buffer, d.byteOffset + 8, n);
+        const frames = n >> 1;
+        if (!frames) return;
+        const ab = actx.createBuffer(2, frames, 44100);
+        const L = ab.getChannelData(0), R = ab.getChannelData(1);
+        for (let i = 0; i < frames; i++) {
+            L[i] = pcm[2 * i] / 32768;
+            R[i] = pcm[2 * i + 1] / 32768;
+        }
+        const src = actx.createBufferSource();
+        src.buffer = ab;
+        src.connect(actx.destination);
+        if (playhead < actx.currentTime + 0.05) {
+            playhead = actx.currentTime + 0.05;
+        }
+        src.start(playhead);
+        playhead += frames / 44100;
+    } catch (e) { /* no audio yet */ }
+}
+setInterval(pumpAudio, 60);
+
 /* debug/automation hook */
 window.__ipod = {
     key: (q, d) => qemu._qemu_wasm_key_event(q, d),

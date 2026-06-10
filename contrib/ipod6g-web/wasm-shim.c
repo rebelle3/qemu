@@ -163,6 +163,53 @@ static void wheel_bh(void *opaque)
     qemu_set_irq(qdev_get_gpio_in_named(wheel, "wheel-touch", 0), touched);
 }
 
+/* ---- audio: publish teed I2S samples through MEMFS ---- */
+
+extern size_t s5l8702_i2s_tee_read(void *dev, uint32_t *seq, int16_t *dst,
+                                   size_t max);
+
+#define AUDIO_CHUNK_MAX 8192    /* samples per poll */
+
+static void audio_bh(void *opaque)
+{
+    static DeviceState *i2s;
+    static uint32_t seq;
+    static uint32_t file_no;
+    static int16_t buf[AUDIO_CHUNK_MAX];
+    size_t n;
+
+    if (!i2s) {
+        Object *o = object_resolve_path_type("", "s5l8702-i2s", NULL);
+
+        if (!o) {
+            return;
+        }
+        i2s = DEVICE(o);
+    }
+    n = s5l8702_i2s_tee_read(i2s, &seq, buf, AUDIO_CHUNK_MAX);
+    if (n > 0) {
+        FILE *f = fopen("/achunk.tmp", "wb");
+
+        if (f) {
+            uint32_t hdr[2] = { ++file_no, (uint32_t)n };
+
+            fwrite(hdr, sizeof(hdr), 1, f);
+            fwrite(buf, 2, n, f);
+            fclose(f);
+            rename("/achunk.tmp", "/achunk");
+        }
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE void qemu_wasm_audio_poll(void)
+{
+    AioContext *ctx = qemu_get_aio_context();
+
+    if (ctx) {
+        aio_bh_schedule_oneshot(ctx, audio_bh, NULL);
+    }
+}
+
 EMSCRIPTEN_KEEPALIVE void qemu_wasm_wheel(int pos, int touched)
 {
     AioContext *ctx = qemu_get_aio_context();
