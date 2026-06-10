@@ -72,6 +72,7 @@ struct PL080State {
     uint32_t tc_delay_ns;
     uint32_t pending_complete;  /* bitmask of channels in drain window */
     uint32_t pending_tc;        /* deferred terminal-count flags */
+    uint32_t wait_ack;          /* channels held until TC acknowledge */
     QEMUTimer tc_timer;
     pl080_channel chan[PL080_MAX_CHANNELS];
     int nchannels;

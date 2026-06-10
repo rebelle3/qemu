@@ -65,6 +65,7 @@ static const VMStateDescription vmstate_pl080 = {
         VMSTATE_UINT32(dreq_level, PL080State),
         VMSTATE_UINT32_V(pending_complete, PL080State, 2),
         VMSTATE_UINT32_V(pending_tc, PL080State, 2),
+        VMSTATE_UINT32_V(wait_ack, PL080State, 2),
         VMSTATE_TIMER_V(tc_timer, PL080State, 2),
         VMSTATE_UINT8(tc_int, PL080State),
         VMSTATE_UINT8(tc_int, PL080State),
@@ -134,7 +135,7 @@ again:
             if ((ch->conf & (PL080_CCONF_H | PL080_CCONF_E))
                     != PL080_CCONF_E)
                 continue;
-            if (s->pending_complete & (1u << c))
+            if ((s->pending_complete | s->wait_ack) & (1u << c))
                 continue;
             flow = (ch->conf >> 11) & 7;
             if (flow >= 4) {
@@ -217,6 +218,10 @@ again:
                 bool seg_tc = (ch->ctrl & PL080_CCTRL_I) != 0;
 
                 next_lli = (ch->lli & ~3);
+                if (getenv("IPOD6G_DEBUG")) {
+                    fprintf(stderr, "PL080 SEGEND ch%d tc=%d lli=%08x ctrl=%08x\n",
+                            c, seg_tc, ch->lli, ch->ctrl);
+                }
                 if (s->tc_delay_ns && (seg_tc || !next_lli)) {
                     /*
                      * Emulate the FIFO drain time of the segment that
@@ -371,6 +376,10 @@ static void pl080_write(void *opaque, hwaddr offset,
     switch (offset >> 2) {
     case 2: /* IntTCClear */
         s->tc_int &= ~value;
+        if (s->wait_ack & value) {
+            s->wait_ack &= ~value;
+            pl080_run(s);
+        }
         break;
     case 4: /* IntErrorClear */
         s->err_int &= ~value;
@@ -451,8 +460,19 @@ static void pl080_tc_timer(void *opaque)
         if (!(pending & (1u << c))) {
             continue;
         }
+        if (getenv("IPOD6G_DEBUG")) {
+            fprintf(stderr, "PL080 EXPIRE ch%d ptc=%d lli=%08x\n",
+                    c, !!(s->pending_tc & (1u << c)), ch->lli);
+        }
         if (s->pending_tc & (1u << c)) {
             s->tc_int |= 1 << c;
+            /*
+             * Hold the channel until the guest acknowledges this
+             * terminal count (IntTCClear); this keeps one interrupt
+             * per I-flagged segment visible to the guest even when
+             * transfers complete much faster than real hardware.
+             */
+            s->wait_ack |= 1u << c;
         }
         next_lli = ch->lli & ~3;
         if (next_lli) {
