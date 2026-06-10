@@ -29,3 +29,11 @@ Boot::
 or a scrambled ``rockbox.ipod`` image (detected by its ``ip6g`` header)
 for direct-to-DRAM boot.  See ``contrib/ipod6g/`` for scripts that build
 the disk image and drive the machine over QMP.
+
+Running in a browser
+--------------------
+
+The machine can also be built to WebAssembly using QEMU's emscripten
+support (wasm64 + TCI) and run on an HTML canvas with keyboard and
+click-wheel input.  See ``contrib/ipod6g-web/README.rst`` for the
+toolchain recipe, bundle build and a COOP/COEP-aware dev server.
