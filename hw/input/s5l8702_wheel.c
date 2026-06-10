@@ -107,6 +107,14 @@ static void s5l8702_wheel_push(S5L8702WheelState *s, uint32_t pkt)
     if (s->fifo_len < FIFO_SIZE) {
         s->fifo[(s->fifo_head + s->fifo_len) % FIFO_SIZE] = pkt;
         s->fifo_len++;
+    } else {
+        /*
+         * Overflow (the guest stalled mid-gesture): keep the newest
+         * state. Positions are absolute, so losing an intermediate
+         * move costs nothing, while losing the final position or the
+         * untouch packet loses the whole gesture.
+         */
+        s->fifo[(s->fifo_head + FIFO_SIZE - 1) % FIFO_SIZE] = pkt;
     }
 }
 
