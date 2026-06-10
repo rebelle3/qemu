@@ -88,6 +88,7 @@ Board-specific documentation
    arm/emcraft-sf2
    arm/exynos
    arm/fby35
+   arm/ipod6g
    arm/musicpal
    arm/kzm
    arm/nrf

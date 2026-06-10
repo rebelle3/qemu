@@ -969,6 +969,17 @@ S: Odd Fixes
 F: hw/arm/musca.c
 F: docs/system/arm/musca.rst
 
+iPod Classic 6G (S5L8702)
+M: Rebelle <rebelle425@gmail.com>
+S: Maintained
+F: hw/arm/ipod6g.c
+F: hw/*/s5l8702_*.c
+F: hw/intc/pl192.c
+F: include/hw/intc/pl192.h
+F: hw/misc/pcf50635.c
+F: contrib/ipod6g/
+F: docs/system/arm/ipod6g.rst
+
 Musicpal
 M: Jan Kiszka <jan.kiszka@web.de>
 M: Peter Maydell <peter.maydell@linaro.org>
