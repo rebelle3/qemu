@@ -279,10 +279,13 @@ static void ipod6g_init(MachineState *machine)
     ipod6g_stub("s5l8702.eic", IPOD6G_EIC_BASE, 0x1000);
     ipod6g_stub("s5l8702.usbphy", IPOD6G_USBPHY_BASE, 0x1000);
     ipod6g_stub("s5l8702.wdt", IPOD6G_WDT_BASE, 0x1000);
-    /* I2S0: audio sink pacing the playback DMA */
+    /* I2S0: audio output (pacing the playback DMA) */
     {
         DeviceState *i2s = qdev_new("s5l8702-i2s");
 
+        if (machine->audiodev) {
+            qdev_prop_set_string(i2s, "audiodev", machine->audiodev);
+        }
         sysbus_realize_and_unref(SYS_BUS_DEVICE(i2s), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(i2s), 0, IPOD6G_I2S0_BASE);
         /* IIS0_TX is DMAC0 peripheral request line 0xA */
@@ -317,6 +320,7 @@ static void ipod6g_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_cpu_type = ARM_CPU_TYPE_NAME("arm926");
     mc->default_ram_size = 64 * MiB;
     mc->default_ram_id = "ipod6g.ram";
+    machine_add_audiodev_property(mc);
     mc->ignore_memory_transaction_failures = true;
 }
 
