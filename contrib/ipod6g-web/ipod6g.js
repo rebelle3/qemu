@@ -151,7 +151,8 @@ function wheelPos(e) {
 
 if (hasWheelApi) {
     wheelEl.addEventListener('pointerdown', (e) => {
-        wheelEl.setPointerCapture(e.pointerId);
+        console.debug('[wheel] down', e.target.id || 'ring', wheelPos(e));
+        try { wheelEl.setPointerCapture(e.pointerId); } catch (err) {}
         wheelLast = wheelPos(e);
         tapButton = RING_BUTTONS[e.target.id] ?? null;
         tapMoved = 0;
@@ -189,5 +190,13 @@ if (hasWheelApi) {
     wheelEl.addEventListener('pointerup', lift);
     wheelEl.addEventListener('pointercancel', lift);
 }
+
+/* debug/automation hook */
+window.__ipod = {
+    key: (q, d) => qemu._qemu_wasm_key_event(q, d),
+    wheel: (p, t) => qemu._qemu_wasm_wheel(p, t),
+    QKEY,
+};
+console.log('[ipod6g] input wired; wheelApi=', hasWheelApi);
 
 canvas.focus();
