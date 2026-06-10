@@ -80,7 +80,7 @@ function blit() {
             if (!image || image.width !== w || image.height !== h) {
                 canvas.width = w; canvas.height = h;
                 image = ctx.createImageData(w, h);
-                audioBadge();
+                status('running');
             }
             image.data.set(d.subarray(16, 16 + w * h * 4));
             ctx.putImageData(image, 0, 0);
@@ -198,18 +198,6 @@ if (hasWheelApi) {
  * gesture to satisfy autoplay policies. */
 let actx = null, playhead = 0, lastChunk = 0;
 
-function audioBadge() {
-    const el = document.getElementById('status');
-    if (!actx) {
-        el.textContent = 'running — tap anywhere to enable sound 🔇';
-    } else if (actx.state !== 'running') {
-        el.textContent = 'sound blocked — tap again (check the silent switch) 🔇';
-    } else {
-        el.textContent = 'running 🔊 (iPhone: ring/silent switch must be off '
-                       + 'to hear Web Audio)';
-    }
-}
-
 function ensureAudio() {
     try {
         if (!actx) {
@@ -229,7 +217,6 @@ function ensureAudio() {
             src.start(0);
         }
     } catch (e) { console.warn('audio unlock failed:', e); }
-    setTimeout(audioBadge, 150);
 }
 /* iOS Safari only treats some gesture types as activation for audio */
 for (const ev of ['touchend', 'click', 'pointerup', 'keydown']) {
@@ -257,14 +244,20 @@ function pumpAudio() {
         const src = actx.createBufferSource();
         src.buffer = ab;
         src.connect(actx.destination);
-        if (playhead < actx.currentTime + 0.05) {
-            playhead = actx.currentTime + 0.05;
+        /*
+         * Jitter buffer: the producer is bursty (interpreted CPU,
+         * polled chunks), so keep a deep cushion ahead of the audio
+         * clock and re-establish it fully after an underrun rather
+         * than scheduling at the edge.
+         */
+        if (playhead < actx.currentTime + 0.10) {
+            playhead = actx.currentTime + 0.25;
         }
         src.start(playhead);
         playhead += frames / 44100;
     } catch (e) { /* no audio yet */ }
 }
-setInterval(pumpAudio, 60);
+setInterval(pumpAudio, 25);
 
 /* debug/automation hook */
 window.__ipod = {
