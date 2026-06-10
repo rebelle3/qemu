@@ -25,8 +25,8 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "qemu/aio.h"
-#include "hw/qdev-core.h"
-#include "hw/irq.h"
+#include "hw/core/qdev.h"
+#include "hw/core/irq.h"
 #include "ui/console.h"
 #include "ui/surface.h"
 #include "ui/input.h"
@@ -146,8 +146,13 @@ static void wheel_bh(void *opaque)
     bool touched = v & 1;
 
     if (!wheel) {
-        Object *o = object_resolve_path_type("", "s5l8702-wheel", NULL);
+        bool ambiguous = false;
+        Object *o = object_resolve_path_type("", "s5l8702-wheel", &ambiguous);
 
+        if (getenv("IPOD6G_DEBUG")) {
+            fprintf(stderr, "WHEELSHIM resolve=%p ambiguous=%d\n",
+                    (void *)o, ambiguous);
+        }
         if (!o) {
             return;
         }

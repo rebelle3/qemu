@@ -90,6 +90,22 @@ for (const a of actions) {
         }, at * 1000);
     } else if (p[2] === 'shot') {
         setTimeout(() => savePng(`/tmp/${p[3]}.png`), at * 1000);
+    } else if (p[2] === 'wheel') {
+        /* at:N:wheel:<clicks> : rotate clockwise by clicks (4/step) */
+        setTimeout(() => {
+            let pos = 0, moved = 0;
+            const clicks = Number(p[3]);
+            qemu._qemu_wasm_wheel(0, 1);
+            const iv = setInterval(() => {
+                pos = (pos + 2) % 96; moved += 2;
+                qemu._qemu_wasm_wheel(pos, 1);
+                if (moved >= clicks) {
+                    clearInterval(iv);
+                    setTimeout(() => qemu._qemu_wasm_wheel(pos, 0), 120);
+                    console.log('[act] wheel done', clicks);
+                }
+            }, 90);
+        }, at * 1000);
     }
 }
 
