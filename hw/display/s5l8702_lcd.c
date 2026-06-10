@@ -89,6 +89,12 @@ struct S5L8702LcdState {
 
 static void s5l8702_lcd_put_pixel(S5L8702LcdState *s, uint16_t pix)
 {
+    if (getenv("IPOD6G_DEBUG")) {
+        static int px;
+        if ((px++ % 76800) == 0) {
+            fprintf(stderr, "PIXDBG n=%d at(%d,%d)\n", px, s->gram_x, s->gram_y);
+        }
+    }
     if (s->gram_x < LCD_WIDTH && s->gram_y < LCD_HEIGHT) {
         s->fb[s->gram_y * LCD_WIDTH + s->gram_x] = pix;
     }
@@ -107,6 +113,10 @@ static void s5l8702_lcd_put_pixel(S5L8702LcdState *s, uint16_t pix)
 
 static void s5l8702_lcd_command(S5L8702LcdState *s, uint32_t cmd)
 {
+    if (getenv("IPOD6G_DEBUG")) {
+        fprintf(stderr, "LCDDBG cmd=%02x win=(%d,%d)-(%d,%d)\n",
+                cmd, s->win_xs, s->win_ys, s->win_xe, s->win_ye);
+    }
     s->cur_cmd = cmd;
     s->param_idx = 0;
     s->pixel_mode = false;

@@ -118,7 +118,7 @@ static DeviceState *ipod6g_dmac(hwaddr base, qemu_irq irq)
     object_property_set_link(OBJECT(dev), "downstream",
                              OBJECT(get_system_memory()), &error_fatal);
     /* emulate peripheral FIFO drain so chain appends win the race */
-    qdev_prop_set_uint32(dev, "tc-delay-ns", 200000);
+    qdev_prop_set_uint32(dev, "tc-delay-ns", 2000000);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
     sysbus_connect_irq(SYS_BUS_DEVICE(dev), 0, irq);
@@ -289,7 +289,12 @@ static void ipod6g_init(MachineState *machine)
         qdev_connect_gpio_out_named(i2s, "dreq", 0,
                                     qdev_get_gpio_in_named(dmac0, "dreq", 0xa));
     }
-    ipod6g_stub("s5l8702.uart", IPOD6G_UART_BASE, 0x10000);
+    {
+        DeviceState *uart = qdev_new("s5l8702-uart");
+
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(uart), &error_fatal);
+        sysbus_mmio_map(SYS_BUS_DEVICE(uart), 0, IPOD6G_UART_BASE);
+    }
     ipod6g_stub("s5l8702.adc", IPOD6G_ADC_BASE, 0x1000);
     ipod6g_stub("s5l8702.spi0", IPOD6G_SPI0_BASE, 0x1000);
     ipod6g_stub("s5l8702.spi2", IPOD6G_SPI2_BASE, 0x1000);

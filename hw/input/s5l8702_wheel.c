@@ -95,6 +95,9 @@ static void s5l8702_wheel_push(S5L8702WheelState *s, uint32_t pkt)
         /* controller not started */
         return;
     }
+    if (getenv("IPOD6G_DEBUG")) {
+        fprintf(stderr, "PKTDBG push %08x\n", pkt);
+    }
     if (s->wheelint == 0 && s->fifo_len == 0) {
         s->rx = pkt;
         s->wheelint |= WHEEL_INT_RX;

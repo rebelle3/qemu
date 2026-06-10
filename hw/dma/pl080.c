@@ -93,6 +93,8 @@ static void pl080_update(PL080State *s)
     qemu_set_irq(s->irq, errlevel || tclevel);
 }
 
+static void pl080_complete_channel(PL080State *s, int c);
+
 static void pl080_run(PL080State *s)
 {
     int c;
@@ -362,6 +364,17 @@ static void pl080_write(void *opaque, hwaddr offset,
             break;
         case 2: /* LLI */
             s->chan[i].lli = value;
+            if (s->pending_complete & (1u << i)) {
+                /*
+                 * The guest appended to the chain while the final
+                 * segment was still "draining": follow it right away
+                 * rather than racing the drain timer (a slow guest
+                 * may take longer than any fixed window).
+                 */
+                pl080_complete_channel(s, i);
+                pl080_update(s);
+                pl080_run(s);
+            }
             break;
         case 3: /* Control */
             s->chan[i].ctrl = value;
@@ -445,50 +458,53 @@ static void pl080_reset(DeviceState *dev)
  * DREQ outputs here; channels using peripheral flow control only
  * make progress while the matching request line is high.
  */
+/*
+ * Finish a channel's drain window: deliver the deferred terminal count
+ * (holding the channel until the guest acknowledges it) and either
+ * follow the LLI chain or disable the channel.
+ */
+static void pl080_complete_channel(PL080State *s, int c)
+{
+    pl080_channel *ch = &s->chan[c];
+    uint32_t next_lli;
+
+    s->pending_complete &= ~(1u << c);
+    if (s->pending_tc & (1u << c)) {
+        s->tc_int |= 1 << c;
+        /*
+         * Hold the channel until the guest acknowledges this
+         * terminal count (IntTCClear); this keeps one interrupt
+         * per I-flagged segment visible to the guest even when
+         * transfers complete much faster than real hardware.
+         */
+        s->wait_ack |= 1u << c;
+        s->pending_tc &= ~(1u << c);
+    }
+    next_lli = ch->lli & ~3;
+    if (next_lli) {
+        ch->src = address_space_ldl_le(&s->downstream_as, next_lli,
+                                       MEMTXATTRS_UNSPECIFIED, NULL);
+        ch->dest = address_space_ldl_le(&s->downstream_as, next_lli + 4,
+                                        MEMTXATTRS_UNSPECIFIED, NULL);
+        ch->ctrl = address_space_ldl_le(&s->downstream_as, next_lli + 12,
+                                        MEMTXATTRS_UNSPECIFIED, NULL);
+        ch->lli = address_space_ldl_le(&s->downstream_as, next_lli + 8,
+                                       MEMTXATTRS_UNSPECIFIED, NULL);
+    } else {
+        ch->conf &= ~PL080_CCONF_E;
+    }
+}
+
 static void pl080_tc_timer(void *opaque)
 {
     PL080State *s = opaque;
     uint32_t pending = s->pending_complete;
     int c;
 
-    s->pending_complete = 0;
-
     for (c = 0; c < s->nchannels; c++) {
-        pl080_channel *ch = &s->chan[c];
-        uint32_t next_lli;
-
-        if (!(pending & (1u << c))) {
-            continue;
+        if (pending & (1u << c)) {
+            pl080_complete_channel(s, c);
         }
-        if (getenv("IPOD6G_DEBUG")) {
-            fprintf(stderr, "PL080 EXPIRE ch%d ptc=%d lli=%08x\n",
-                    c, !!(s->pending_tc & (1u << c)), ch->lli);
-        }
-        if (s->pending_tc & (1u << c)) {
-            s->tc_int |= 1 << c;
-            /*
-             * Hold the channel until the guest acknowledges this
-             * terminal count (IntTCClear); this keeps one interrupt
-             * per I-flagged segment visible to the guest even when
-             * transfers complete much faster than real hardware.
-             */
-            s->wait_ack |= 1u << c;
-        }
-        next_lli = ch->lli & ~3;
-        if (next_lli) {
-            /* the guest extended the chain during the drain window */
-            ch->src = address_space_ldl_le(&s->downstream_as, next_lli,
-                                           MEMTXATTRS_UNSPECIFIED, NULL);
-            ch->dest = address_space_ldl_le(&s->downstream_as, next_lli + 4,
-                                            MEMTXATTRS_UNSPECIFIED, NULL);
-            ch->ctrl = address_space_ldl_le(&s->downstream_as, next_lli + 12,
-                                            MEMTXATTRS_UNSPECIFIED, NULL);
-            ch->lli = address_space_ldl_le(&s->downstream_as, next_lli + 8,
-                                           MEMTXATTRS_UNSPECIFIED, NULL);
-        } else {
-            ch->conf &= ~PL080_CCONF_E;
-        }
-        s->pending_tc &= ~(1u << c);
     }
     pl080_update(s);
     pl080_run(s);
