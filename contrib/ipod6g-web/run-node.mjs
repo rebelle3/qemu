@@ -38,19 +38,28 @@ const Module = {
 const qemu = await factory(Module);
 console.log('module instantiated, letting the machine run...');
 
-const fbInfoPtr = qemu._qemu_wasm_fb_info() >>> 0;
-let frames = 0, lastFrame = -1;
+function readFrame() {
+    try {
+        const d = qemu.FS.readFile('/fbdump');
+        const i = new Uint32Array(d.buffer, d.byteOffset, 4);
+        return { frame: i[0], w: i[1], h: i[2],
+                 rgba: d.subarray(16, 16 + i[1] * i[2] * 4) };
+    } catch (e) {
+        return null;
+    }
+}
+
+let frames = 0, lastFrame = -1, last = null;
 
 const poll = setInterval(() => {
     qemu._qemu_wasm_request_frame();
-    const info = new Uint32Array(qemu.HEAPU8.buffer, fbInfoPtr, 4);
-    if (info[0] !== lastFrame) { lastFrame = info[0]; frames++; }
+    const f = readFrame();
+    if (f && f.frame !== lastFrame) { lastFrame = f.frame; frames++; last = f; }
 }, 200);
 
 setTimeout(() => {
     clearInterval(poll);
-    const info = new Uint32Array(qemu.HEAPU8.buffer, fbInfoPtr, 4);
     console.log(`alive after ${seconds}s; fb updates=${frames} ` +
-                `last=${info[1]}x${info[2]}`);
+                `last=${last ? last.w + 'x' + last.h : 'none'}`);
     process.exit(frames > 1 ? 0 : 1);
 }, seconds * 1000);

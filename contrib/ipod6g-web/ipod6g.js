@@ -65,26 +65,27 @@ Module.preRun = [async function () {
 
 const qemu = await factory(Module);
 
-/* ---- display: poll the shim's shared framebuffer ---- */
-const fbInfoPtr = qemu._qemu_wasm_fb_info() >>> 0;
+/* ---- display: poll the frame the shim publishes in MEMFS ---- */
 let lastFrame = -1;
 let image = null;
 
 function blit() {
     qemu._qemu_wasm_request_frame();
-    const info = new Uint32Array(qemu.HEAPU8.buffer, fbInfoPtr, 4);
-    const [frame, w, h, pixels] = info;
-    if (frame !== lastFrame && w > 0 && h > 0) {
-        lastFrame = frame;
-        if (!image || image.width !== w || image.height !== h) {
-            canvas.width = w; canvas.height = h;
-            image = ctx.createImageData(w, h);
-            status('running — click the screen, then use the keys below');
+    try {
+        const d = qemu.FS.readFile('/fbdump');
+        const info = new Uint32Array(d.buffer, d.byteOffset, 4);
+        const [frame, w, h] = info;
+        if (frame !== lastFrame && w > 0 && h > 0) {
+            lastFrame = frame;
+            if (!image || image.width !== w || image.height !== h) {
+                canvas.width = w; canvas.height = h;
+                image = ctx.createImageData(w, h);
+                status('running — click the screen, then use the keys below');
+            }
+            image.data.set(d.subarray(16, 16 + w * h * 4));
+            ctx.putImageData(image, 0, 0);
         }
-        /* copy out of the (shared) heap, then draw */
-        image.data.set(new Uint8Array(qemu.HEAPU8.buffer, pixels, w * h * 4));
-        ctx.putImageData(image, 0, 0);
-    }
+    } catch (e) { /* no frame yet */ }
     requestAnimationFrame(blit);
 }
 requestAnimationFrame(blit);

@@ -54,6 +54,9 @@ emcc -O2 -pthread -sMEMORY64=2 -DWASM_BIGINT \
     $(pkg-config --cflags glib-2.0 pixman-1) \
     -c "$HERE/wasm-shim.c" -o "$BUILD/wasm-shim.o"
 
+# response files are transient; -d keeprsp makes ninja leave them behind
+rm -f qemu-system-arm.js qemu-system-arm.wasm
+ninja -d keeprsp qemu-system-arm.js
 LINKCMD=$(ninja -t commands qemu-system-arm.js | tail -1)
 RSP=$(echo "$LINKCMD" | grep -o '@[^ ]*' | tr -d '@')
 PREFIX=${LINKCMD%%@*}

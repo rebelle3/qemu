@@ -58,6 +58,9 @@ static void fb_copy_bh(void *opaque)
     int w, h, x, y;
 
     frame_pending = false;
+    if (fb_state.frame == 0) {
+        fprintf(stderr, "wasm-shim: fb_copy_bh running, con=%p\n", (void *)con);
+    }
     if (!con) {
         return;
     }
@@ -87,12 +90,33 @@ static void fb_copy_bh(void *opaque)
     fb_state.width = w;
     fb_state.height = h;
     qatomic_inc(&fb_state.frame);
+
+    /*
+     * Publish the frame through MEMFS: the emscripten FS object is part
+     * of the exported runtime, while direct heap views are not.
+     */
+    {
+        FILE *f = fopen("/fbdump.tmp", "wb");
+
+        if (f) {
+            fwrite(&fb_state, sizeof(fb_state), 1, f);
+            fwrite(fb_pixels, 4, (size_t)w * h, f);
+            fclose(f);
+            rename("/fbdump.tmp", "/fbdump");
+        }
+    }
 }
 
 EMSCRIPTEN_KEEPALIVE void qemu_wasm_request_frame(void)
 {
+    static int reqs;
+
     if (qatomic_xchg(&frame_pending, true)) {
         return;     /* one in flight is enough */
+    }
+    if (reqs++ == 0) {
+        fprintf(stderr, "wasm-shim: first request, ctx=%p\n",
+                (void *)qemu_get_aio_context());
     }
     aio_bh_schedule_oneshot(qemu_get_aio_context(), fb_copy_bh, NULL);
 }
