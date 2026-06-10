@@ -9,6 +9,8 @@ GPL-2.0; sources for everything in this bundle live on that branch and
 at https://git.rockbox.org/ .
 
 ~65 MB download; boot takes a minute or two (interpreted CPU).
+Sound works: tap the screen or wheel once (browser autoplay policy),
+then play a track.
 Controls: arrows = MENU/PLAY/PREV/NEXT, Enter = SELECT, `[`/`]` or the
 mouse wheel = scroll, or use the on-screen click wheel. The first
 press only wakes the backlight.
