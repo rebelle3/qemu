@@ -25,6 +25,8 @@
 #include "qemu/osdep.h"
 #include "qemu/main-loop.h"
 #include "qemu/aio.h"
+#include "hw/qdev-core.h"
+#include "hw/irq.h"
 #include "ui/console.h"
 #include "ui/surface.h"
 #include "ui/input.h"
@@ -131,5 +133,37 @@ EMSCRIPTEN_KEEPALIVE void qemu_wasm_key_event(int qcode, int down)
 
     if (ctx) {
         aio_bh_schedule_oneshot(ctx, key_bh, (void *)v);
+    }
+}
+
+/* ---- absolute click-wheel input (touch front-ends) ---- */
+
+static void wheel_bh(void *opaque)
+{
+    static DeviceState *wheel;
+    uintptr_t v = (uintptr_t)opaque;
+    int pos = (v >> 1) & 0x7f;
+    bool touched = v & 1;
+
+    if (!wheel) {
+        Object *o = object_resolve_path_type("", "s5l8702-wheel", NULL);
+
+        if (!o) {
+            return;
+        }
+        wheel = DEVICE(o);
+    }
+    /* order matters: position first so the touch packet carries it */
+    qemu_set_irq(qdev_get_gpio_in_named(wheel, "wheel-pos", 0), pos);
+    qemu_set_irq(qdev_get_gpio_in_named(wheel, "wheel-touch", 0), touched);
+}
+
+EMSCRIPTEN_KEEPALIVE void qemu_wasm_wheel(int pos, int touched)
+{
+    AioContext *ctx = qemu_get_aio_context();
+    uintptr_t v = (((uintptr_t)pos & 0x7f) << 1) | (touched ? 1 : 0);
+
+    if (ctx) {
+        aio_bh_schedule_oneshot(ctx, wheel_bh, (void *)v);
     }
 }

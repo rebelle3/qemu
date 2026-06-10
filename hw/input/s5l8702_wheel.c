@@ -190,6 +190,30 @@ static void s5l8702_wheel_key(DeviceState *dev, QemuConsole *src,
     }
 }
 
+static void s5l8702_wheel_touch_gpio(void *opaque, int line, int level)
+{
+    S5L8702WheelState *s = opaque;
+    bool touched = level != 0;
+
+    if (s->touched != touched) {
+        s->touched = touched;
+        s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
+    }
+}
+
+static void s5l8702_wheel_pos_gpio(void *opaque, int line, int level)
+{
+    S5L8702WheelState *s = opaque;
+    uint32_t pos = (uint32_t)level % WHEEL_POSITIONS;
+
+    if (s->wheel_pos != pos) {
+        s->wheel_pos = pos;
+        if (s->touched) {
+            s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
+        }
+    }
+}
+
 static const QemuInputHandler s5l8702_wheel_handler = {
     .name = "iPod click wheel",
     .mask = INPUT_EVENT_MASK_KEY,
@@ -307,6 +331,10 @@ static void s5l8702_wheel_init(Object *obj)
                           "s5l8702-wheel", 0x100);
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
+    qdev_init_gpio_in_named(DEVICE(obj), s5l8702_wheel_touch_gpio,
+                            "wheel-touch", 1);
+    qdev_init_gpio_in_named(DEVICE(obj), s5l8702_wheel_pos_gpio,
+                            "wheel-pos", 1);
 }
 
 static const VMStateDescription vmstate_s5l8702_wheel = {
