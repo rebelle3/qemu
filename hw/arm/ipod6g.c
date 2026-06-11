@@ -135,7 +135,20 @@ static void ipod6g_load_kernel(Ipod6gMachineState *s, const char *filename)
         error_report("ipod6g: cannot load '%s': %s", filename, gerr->message);
         exit(1);
     }
-    if (len > 8 && memcmp(data + 4, "ip6g", 4) == 0) {
+    if (len > 0x800 && memcmp(data, "8702", 4) == 0) {
+        /*
+         * Apple IM3 image (e.g. a decrypted osos): 0x800 header then the
+         * firmware body.  enc_type (byte 7) 2/4 is already plaintext;
+         * entry (bytes 8-11, LE) is the offset into the body.  The body
+         * is loaded at and entered from DRAM, matching how the Apple
+         * bootloader runs the OS.
+         */
+        uint32_t entry_off = ldl_le_p(data + 8);
+
+        rom_add_blob_fixed("osos", data + 0x800, len - 0x800,
+                           IPOD6G_DRAM_BASE);
+        s->entry = IPOD6G_DRAM_BASE + entry_off;
+    } else if (len > 8 && memcmp(data + 4, "ip6g", 4) == 0) {
         /* scrambled rockbox.ipod: strip header, load at DRAM base */
         rom_add_blob_fixed("rockbox", data + 8, len - 8, IPOD6G_DRAM_BASE);
         s->entry = IPOD6G_DRAM_BASE;
@@ -295,6 +308,7 @@ static void ipod6g_init(MachineState *machine)
     {
         DeviceState *uart = qdev_new("s5l8702-uart");
 
+        qdev_prop_set_chr(uart, "chardev", serial_hd(0));
         sysbus_realize_and_unref(SYS_BUS_DEVICE(uart), &error_fatal);
         sysbus_mmio_map(SYS_BUS_DEVICE(uart), 0, IPOD6G_UART_BASE);
     }

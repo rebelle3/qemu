@@ -13,6 +13,9 @@
 
 #include "qemu/osdep.h"
 #include "hw/core/sysbus.h"
+#include "hw/core/qdev-properties.h"
+#include "hw/core/qdev-properties-system.h"
+#include "chardev/char-fe.h"
 #include "migration/vmstate.h"
 #include "qemu/log.h"
 #include "qemu/module.h"
@@ -38,6 +41,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(S5L8702UartState, S5L8702_UART)
 struct S5L8702UartState {
     SysBusDevice parent_obj;
     MemoryRegion iomem;
+    CharFrontend chr;       /* TX of all ports tee'd here (debug console) */
     uint32_t regs[UART_N_PORTS][UART_PORT_REGS];
 };
 
@@ -74,9 +78,15 @@ static void s5l8702_uart_write(void *opaque, hwaddr offset,
         return;
     }
     switch (reg) {
+    case REG_UTXH: {
+        /* Tee transmitted bytes to the host chardev (osos/Rockbox debug
+         * console).  RX stays idle so the IAP remote stays silent. */
+        uint8_t ch = val;
+        qemu_chr_fe_write_all(&s->chr, &ch, 1);
+        return;
+    }
     case REG_UTRSTAT:
-    case REG_UTXH:
-        /* status flags and transmitted data are discarded */
+        /* status flags are discarded */
         return;
     default:
         s->regs[port][reg >> 2] = val;
@@ -116,6 +126,10 @@ static const VMStateDescription vmstate_s5l8702_uart = {
     }
 };
 
+static const Property s5l8702_uart_props[] = {
+    DEFINE_PROP_CHR("chardev", S5L8702UartState, chr),
+};
+
 static void s5l8702_uart_class_init(ObjectClass *klass, const void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -123,6 +137,7 @@ static void s5l8702_uart_class_init(ObjectClass *klass, const void *data)
 
     rc->phases.hold = s5l8702_uart_reset_hold;
     dc->vmsd = &vmstate_s5l8702_uart;
+    device_class_set_props(dc, s5l8702_uart_props);
 }
 
 static const TypeInfo s5l8702_uart_info = {
