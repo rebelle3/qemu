@@ -59,6 +59,14 @@ OBJECT_DECLARE_SIMPLE_TYPE(S5L8702WheelState, S5L8702_WHEEL)
 
 #define WHEEL_POSITIONS    96
 #define SCROLL_STEP        4    /* wheel clicks per key press */
+/*
+ * Clicks are streamed one per interval, not in an instant burst:
+ * Rockbox's wheel driver derives scroll speed (and acceleration) from
+ * the time between position packets, so a realistic ~20 ms spacing
+ * keeps velocity low and lands exactly one list item per key press
+ * instead of overshooting.
+ */
+#define SCROLL_INTERVAL_NS 20000000
 
 #define FIFO_SIZE 16
 
@@ -81,6 +89,9 @@ struct S5L8702WheelState {
     uint32_t buttons;       /* current PKT_BTN_* state */
     uint32_t wheel_pos;     /* 0..95 */
     bool touched;
+
+    QEMUTimer *scroll_timer;
+    int scroll_pending;     /* signed wheel clicks left to stream */
 };
 
 static void s5l8702_wheel_update_irq(S5L8702WheelState *s)
@@ -187,15 +198,35 @@ static void s5l8702_wheel_key(DeviceState *dev, QemuConsole *src,
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
     } else if (scroll && down) {
         /*
-         * Simulate a finger touching the wheel and moving by
-         * SCROLL_STEP clicks: anchor packet, then the move.
+         * Stream the clicks through the pacing timer instead of an
+         * instant burst.  Plant the finger now (anchor packet); the
+         * timer walks the position one click at a time and lifts the
+         * finger when the queue drains.
          */
-        s->touched = true;
+        if (s->scroll_pending == 0 && !s->touched) {
+            s->touched = true;
+            s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
+        }
+        s->scroll_pending += scroll;
+        timer_mod(s->scroll_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCROLL_INTERVAL_NS);
+    }
+}
+
+static void s5l8702_wheel_scroll_tick(void *opaque)
+{
+    S5L8702WheelState *s = opaque;
+
+    if (s->scroll_pending != 0) {
+        int dir = s->scroll_pending > 0 ? 1 : -1;
+
+        s->wheel_pos = (s->wheel_pos + WHEEL_POSITIONS + dir) % WHEEL_POSITIONS;
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
-        s->wheel_pos = (s->wheel_pos + WHEEL_POSITIONS + scroll)
-                       % WHEEL_POSITIONS;
-        s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
-        /* lift the finger again */
+        s->scroll_pending -= dir;
+        timer_mod(s->scroll_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + SCROLL_INTERVAL_NS);
+    } else if (s->touched) {
+        /* queue drained: lift the finger */
         s->touched = false;
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
     }
@@ -326,6 +357,10 @@ static void s5l8702_wheel_reset_hold(Object *obj, ResetType type)
     s->buttons = 0;
     s->wheel_pos = 0;
     s->touched = false;
+    s->scroll_pending = 0;
+    if (s->scroll_timer) {
+        timer_del(s->scroll_timer);
+    }
 }
 
 static void s5l8702_wheel_realize(DeviceState *dev, Error **errp)
@@ -346,6 +381,8 @@ static void s5l8702_wheel_init(Object *obj)
                             "wheel-touch", 1);
     qdev_init_gpio_in_named(DEVICE(obj), s5l8702_wheel_pos_gpio,
                             "wheel-pos", 1);
+    s->scroll_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
+                                   s5l8702_wheel_scroll_tick, s);
 }
 
 static const VMStateDescription vmstate_s5l8702_wheel = {
