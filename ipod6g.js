@@ -93,18 +93,25 @@ requestAnimationFrame(blit);
 /* ---- input ---- */
 function key(qcode, down) { qemu._qemu_wasm_key_event(qcode, down ? 1 : 0); }
 
+const SCROLL_KEYS = new Map();   /* qcode -> clicks, filled once QKEY known */
+SCROLL_KEYS.set(QKEY.bracket_right, 4).set(QKEY.pgup, 4);
+SCROLL_KEYS.set(QKEY.bracket_left, -4).set(QKEY.pgdn, -4);
+
 canvas.addEventListener('keydown', (e) => {
     const q = KEYMAP[e.code]; if (q === undefined) return;
-    e.preventDefault(); key(q, true);
+    e.preventDefault();
+    if (SCROLL_KEYS.has(q)) return kbScroll(SCROLL_KEYS.get(q));
+    key(q, true);
 });
 canvas.addEventListener('keyup', (e) => {
     const q = KEYMAP[e.code]; if (q === undefined) return;
-    e.preventDefault(); key(q, false);
+    e.preventDefault();
+    if (SCROLL_KEYS.has(q)) return;
+    key(q, false);
 });
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const q = e.deltaY > 0 ? QKEY.bracket_right : QKEY.bracket_left;
-    key(q, true); setTimeout(() => key(q, false), 30);
+    kbScroll(e.deltaY > 0 ? 4 : -4);
 }, { passive: false });
 
 /*
@@ -130,6 +137,37 @@ canvas.addEventListener('wheel', (e) => {
  * a tap of that button; once it rotates, the tap is cancelled. */
 const wheelEl = document.getElementById('wheel');
 const hasWheelApi = typeof qemu._qemu_wasm_wheel === 'function';
+
+/*
+ * Keyboard / mouse-wheel scrolling: synthesize a paced finger rotation.
+ * Rockbox's driver derives velocity from packet timestamps, so the
+ * device's instant 3-packet key burst is dropped; a real-time click
+ * stream (like the touch ring sends) always registers.
+ */
+let kbPos = 0;
+let kbQueue = 0;
+let kbTimer = null;
+function kbScroll(clicks) {
+    if (!hasWheelApi) {          /* old builds: device key path */
+        const q = clicks > 0 ? QKEY.bracket_right : QKEY.bracket_left;
+        key(q, true); setTimeout(() => key(q, false), 30);
+        return;
+    }
+    kbQueue += clicks;
+    if (kbTimer !== null) return;
+    qemu._qemu_wasm_wheel(kbPos, 1);              /* anchor */
+    kbTimer = setInterval(() => {
+        if (kbQueue === 0) {
+            qemu._qemu_wasm_wheel(kbPos, 0);      /* lift */
+            clearInterval(kbTimer); kbTimer = null;
+            return;
+        }
+        const d = kbQueue > 0 ? 1 : -1;
+        kbQueue -= d;
+        kbPos = (kbPos + 96 + d) % 96;
+        qemu._qemu_wasm_wheel(kbPos, 1);
+    }, 50);   /* gentle pacing: a slow (TCI) guest must drain each packet */
+}
 const RING_BUTTONS = {
     'b-menu': QKEY.up, 'b-play': QKEY.down,
     'b-prev': QKEY.left, 'b-next': QKEY.right,
@@ -263,6 +301,7 @@ setInterval(pumpAudio, 25);
 window.__ipod = {
     key: (q, d) => qemu._qemu_wasm_key_event(q, d),
     wheel: (p, t) => qemu._qemu_wasm_wheel(p, t),
+    fb: () => lastFrame,
     QKEY,
 };
 console.log('[ipod6g] input wired; wheelApi=', hasWheelApi);
