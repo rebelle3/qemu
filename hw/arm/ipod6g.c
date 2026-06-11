@@ -144,10 +144,36 @@ static void ipod6g_load_kernel(Ipod6gMachineState *s, const char *filename)
          * bootloader runs the OS.
          */
         uint32_t entry_off = ldl_le_p(data + 8);
+        uint8_t plat_block[0x120];
+        uint8_t sysinfo[8];
 
         rom_add_blob_fixed("osos", data + 0x800, len - 0x800,
                            IPOD6G_DRAM_BASE);
         s->entry = IPOD6G_DRAM_BASE + entry_off;
+
+        /*
+         * Apple bootloader (ONB) handoff shim.
+         *
+         * osos refuses to boot unless a "SysInfo" handoff structure is
+         * present at a fixed IRAM address (0x2203ff18): a 4-byte magic
+         * 'SysI' (0x53797349) followed by a pointer to a 0x120-byte
+         * platform-info block, which osos copies into its own platform
+         * struct.  It then checks the hardware-version field at +0x84
+         * and halts unless it reads 0x13xxxx — i.e. the SysCfg HwVr
+         * (0x130000) the real ONB lifts out of the boot NOR.
+         *
+         * The real ONB cannot be run (its NOR image is encrypted with
+         * the per-device key), so build the minimum handoff here: the
+         * hardware version, in IRAM the OS leaves untouched.
+         */
+        memset(plat_block, 0, sizeof(plat_block));
+        stl_le_p(plat_block + 0x84, 0x00130000);   /* HwVr 1.3 */
+        stl_le_p(sysinfo + 0, 0x53797349);          /* magic 'SysI' */
+        stl_le_p(sysinfo + 4, IPOD6G_IRAM_BASE + 0x3fd00);
+        rom_add_blob_fixed("osos-platblock", plat_block, sizeof(plat_block),
+                           IPOD6G_IRAM_BASE + 0x3fd00);
+        rom_add_blob_fixed("osos-sysinfo", sysinfo, sizeof(sysinfo),
+                           IPOD6G_IRAM_BASE + 0x3ff18);
     } else if (len > 8 && memcmp(data + 4, "ip6g", 4) == 0) {
         /* scrambled rockbox.ipod: strip header, load at DRAM base */
         rom_add_blob_fixed("rockbox", data + 8, len - 8, IPOD6G_DRAM_BASE);

@@ -68,32 +68,34 @@ The version is read from a platform-info struct (default at
 that whole struct is **all zero**, so the version reads 0,
 ``0 >> 16 != 0x13``, and osos halts.
 
-Proven cause and effect
------------------------
+The handoff mechanism (solved)
+------------------------------
 
-Writing 0x00130000 into the struct field (0x0896d780) and the getter's
-cache (0x08911c30) at run time — after osos's bss-clear, via a GDB
-hardware breakpoint, software breakpoints get clobbered by osos's
-self-decompression — makes the predicate pass and osos **advances past
-this gate to the next fatal-handler caller**. So the diagnosis is
-confirmed: osos is missing handoff state that the Apple ONB normally
-establishes, starting with the board/hardware version.
+osos populates that platform struct from a **"SysInfo" handoff** the
+Apple bootloader leaves at a fixed IRAM address. The population routine
+(runtime ~0x08323aec) reads the word at **0x2203ff18**, requires it to
+equal the magic **0x53797349 ('SysI')**, then ``memcpy``\s a 0x120-byte
+block — pointed to by the word at 0x2203ff1c — into the platform struct
+at 0x0896d6fc. The hardware version lands at struct +0x84.
 
-The field lives inside the loaded osos image but is zeroed by osos's
-own startup, so it cannot simply be pre-seeded by the kernel loader; it
-has to be provided after osos initialises, or produced by whatever
-init osos expects to populate the struct (not yet located — osos does
-not reference the SysCfg ``SCfg``/``HwVr`` tags directly, so it obtains
-the value via a handoff/detection path rather than parsing SysCfg).
+The kernel loader now builds this handoff for an injected osos
+(``ipod6g_load_kernel``): it writes the platform block (version
+0x130000 at +0x84) and the ``SysI`` header into the top of IRAM, which
+osos leaves untouched. With it in place osos's getter returns 0x130000,
+the predicate passes, and osos **boots past the version gate** to the
+next fatal-handler caller (runtime ~0x0800f37c) — verified natively,
+no debugger. So the first and most fundamental piece of the ONB handoff
+is reconstructed and shipped.
 
 Remaining work to reach the Apple UI
 ------------------------------------
 
-1. Replicate the ONB handoff: populate osos's platform struct (hardware
-   version 0x130000 first; the struct is ~160 bytes, other fields TBD)
-   at the right point in osos init.
-2. Work through the subsequent fatal-handler gates the same way (each is
-   another expected-state check).
+1. The next gate (~0x0800f37c -> check 0x08013870) is a deeper
+   subsystem call chain that returns an error, not a single handoff
+   value; work through it and the gates after it the same way.
+2. The platform block almost certainly needs more than the version
+   (it is 0x120 bytes; only +0x84 is populated today) — fill fields as
+   later gates demand them.
 3. Provide the storage/resources osos needs once it is past early init
    (NAND/flash controller, Apple disk layout with OS resources), plus
    Apple-specific LCD init, USB, and the crypto engine.
