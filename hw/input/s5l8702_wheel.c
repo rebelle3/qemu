@@ -81,7 +81,19 @@ struct S5L8702WheelState {
     uint32_t buttons;       /* current PKT_BTN_* state */
     uint32_t wheel_pos;     /* 0..95 */
     bool touched;
+
+    /* Timed scroll-gesture emulation. The guest's wheel driver derives scroll
+       distance from angular *velocity* (clicks per microsecond), so the
+       position samples of a gesture must be spread out over real guest time;
+       emitting them instantaneously yields zero velocity and no scrolling. */
+    QEMUTimer *step_timer;
+    int  scroll_pending;    /* remaining timed move samples to emit */
+    int  scroll_dir;        /* +1 clockwise, -1 anticlockwise */
+    bool gesture_active;
 };
+
+/* spacing between simulated wheel samples (guest time) */
+#define WHEEL_STEP_NS   (20 * 1000 * 1000)
 
 static void s5l8702_wheel_update_irq(S5L8702WheelState *s)
 {
@@ -187,16 +199,43 @@ static void s5l8702_wheel_key(DeviceState *dev, QemuConsole *src,
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
     } else if (scroll && down) {
         /*
-         * Simulate a finger touching the wheel and moving by
-         * SCROLL_STEP clicks: anchor packet, then the move.
+         * Queue one more move sample for a timed scroll gesture. The samples
+         * are emitted by s5l8702_wheel_step() spaced WHEEL_STEP_NS apart so the
+         * guest sees a realistic angular velocity; repeated key presses extend
+         * the gesture for smooth continuous scrolling.
          */
-        s->touched = true;
+        int dir = scroll > 0 ? 1 : -1;
+        if (s->gesture_active && dir != s->scroll_dir) {
+            s->scroll_pending = 0;   /* reversal: drop the opposite samples */
+        }
+        s->scroll_dir = dir;
+        s->scroll_pending++;
+        if (!s->gesture_active) {
+            /* anchor the finger at the current position, then start stepping */
+            s->gesture_active = true;
+            s->touched = true;
+            s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
+            timer_mod(s->step_timer,
+                      qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + WHEEL_STEP_NS);
+        }
+    }
+}
+
+static void s5l8702_wheel_step(void *opaque)
+{
+    S5L8702WheelState *s = opaque;
+
+    if (s->scroll_pending > 0) {
+        s->scroll_pending--;
+        s->wheel_pos = (s->wheel_pos + WHEEL_POSITIONS
+                        + s->scroll_dir * SCROLL_STEP) % WHEEL_POSITIONS;
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
-        s->wheel_pos = (s->wheel_pos + WHEEL_POSITIONS + scroll)
-                       % WHEEL_POSITIONS;
-        s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
-        /* lift the finger again */
+        timer_mod(s->step_timer,
+                  qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + WHEEL_STEP_NS);
+    } else {
+        /* lift the finger to end the gesture */
         s->touched = false;
+        s->gesture_active = false;
         s5l8702_wheel_push(s, s5l8702_wheel_status_pkt(s));
     }
 }
@@ -326,11 +365,20 @@ static void s5l8702_wheel_reset_hold(Object *obj, ResetType type)
     s->buttons = 0;
     s->wheel_pos = 0;
     s->touched = false;
+    s->scroll_pending = 0;
+    s->scroll_dir = 0;
+    s->gesture_active = false;
+    if (s->step_timer) {
+        timer_del(s->step_timer);
+    }
 }
 
 static void s5l8702_wheel_realize(DeviceState *dev, Error **errp)
 {
+    S5L8702WheelState *s = S5L8702_WHEEL(dev);
+
     qemu_input_handler_register(dev, &s5l8702_wheel_handler);
+    s->step_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, s5l8702_wheel_step, s);
 }
 
 static void s5l8702_wheel_init(Object *obj)
